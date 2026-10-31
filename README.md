@@ -23,11 +23,13 @@ Laboratório prático de endurecimento (*hardening*) de um servidor Ubuntu Serve
 
 ## Resultados
 
+| Medição | Antes | Depois | Variação |
+|---|---|---|---|
+| Lynis hardening index | 68 | 80 | +12 pontos |
+| Script Python (nota %) | 48% | 100% | +52 pontos percentuais |
+| Controles FAIL de severidade alta | _n_ | 0 | |
 
-| Medição | Antes | Depois |
-|---|---|---|
-| Lynis hardening index | _68_ | _80_ |
-| Script Python (nota %) | _48 %_ | _100 %_ |
+**Como interpretar.** O script chegou a 100% porque verifica os ~30 controles que eu implementei. O Lynis testa centenas de itens, por isso a nota dele é menor e é a medição mais exigente. Os itens que ficaram abertos no Lynis estão justificados na seção de decisões de risco.
 
 Evidências: relatórios em `reports/` e capturas de tela em `docs/prints/`.
 
@@ -55,6 +57,18 @@ Evidências: relatórios em `reports/` e capturas de tela em `docs/prints/`.
 | 8 | Superfície de ataque | Revisão de portas (`ss`), serviços ativos, AppArmor e módulos desnecessários | Menos serviços e módulos significam menos pontos de entrada |
 
 Os arquivos de configuração aplicados estão em `configs/`.
+
+### Correções adicionais guiadas pelo Lynis
+
+Depois dos 8 controles, usei as sugestões do relatório do Lynis para tratar itens adicionais, identificados pelo ID do teste:
+
+| ID Lynis | Área | Ação |
+|---|---|---|
+| `FIRE-4590` | Firewall | Ajuste de firewall sugerido pelo Lynis, aplicado |
+| `BOOT-5122` | Boot | Proteção do GRUB (senha no gerenciador de boot), aplicada |
+| `HRDN-7222` | Hardening | Restrição de acesso aos compiladores, aplicada |
+
+Esse ciclo (medir, corrigir, medir de novo) levou o índice do Lynis de 68 para 80.
 
 ### Script de auditoria em Python
 
@@ -104,8 +118,10 @@ Hardening não é aplicar tudo às cegas. Foram priorizados os controles de maio
 | Item | Decisão | Motivo |
 |---|---|---|
 | `net.ipv4.ip_forward = 0` | Não aplicado | Quebra Docker e VPNs; o ambiente pode precisar de encaminhamento |
-| Sugestões de baixa severidade do Lynis | Parte não aplicada | Baixo impacto no laboratório e custo de manutenção maior que o benefício |
-| _(adicione os seus)_ | | |
+| `FILE-6310` (partições separadas para `/home`, `/tmp` e `/var`) | Não aplicado | O servidor já está em funcionamento com **LVM** sobre a partição `sda3` e um volume lógico único na raiz. Reorganizar o particionamento em um sistema em uso traz risco de indisponibilidade e perda de dados, com benefício baixo neste ambiente. Em uma instalação nova, o ideal é já criar volumes lógicos separados. |
+| `LOGG-2154` (envio de logs a um servidor externo) | Não aplicado | Trata-se de um **servidor de testes isolado**, sem dado real. Em produção, os logs seriam enviados a um coletor remoto (por exemplo, o Wazuh), para que um atacante não consiga apagar a evidência localmente. |
+
+Essas decisões seguem o raciocínio de **aceitação de risco**: o impacto e a probabilidade no ambiente atual não justificam o custo ou o risco da mudança, e o motivo fica registrado.
 
 ## Lições aprendidas
 

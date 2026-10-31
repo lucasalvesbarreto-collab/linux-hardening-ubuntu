@@ -1,88 +1,152 @@
-# Linux Hardening Ubuntu
+# Hardening de Linux (Ubuntu Server) com auditoria automatizada em Python
 
-Este repositorio fornece um conjunto básico, revisável e não destrutivo de hardening para Ubuntu Server.
+Laboratório prático de endurecimento (*hardening*) de um servidor Ubuntu Server, com medição **antes e depois** usando o Lynis e um script próprio em Python que audita os controles e gera relatórios em JSON e Markdown.
 
-> Revise as configurações antes de aplicar em produção. Mudanças incorretas em SSH podem bloquear o acesso remoto.
+> **Ambiente de laboratório.** Todo o projeto foi executado em uma VM local, sem dados reais. Hostnames, IPs e usuários dos relatórios foram substituídos por valores genéricos.
 
-## Estrutura
+## Objetivo
 
-```text
-configs/
-├── 00-hardening.conf        # SSH
-├── jail.local               # Fail2ban
-├── hardening.rules          # Auditd
-├── 99-hardening.conf        # sysctl
-└── modprobe-hardening.conf  # Módulos do kernel
-scripts/
-└── audit_hardening.py       # Auditoria local em JSON e Markdown
-reports/                    # Evidências antes/depois
-docs/prints/                # Capturas de tela e evidências visuais
-```
+- Aplicar controles de segurança baseados em boas práticas (inspirados no CIS Benchmark) em um servidor Linux.
+- **Medir** o resultado de forma objetiva, com dados do antes e do depois.
+- Automatizar a verificação dos controles com Python, para que a auditoria seja repetível e possa rodar em CI.
+- Documentar as decisões, inclusive o que **não** foi aplicado e por quê (aceitação de risco).
 
-## Pré-requisitos
+## Ambiente
 
-- Ubuntu Server LTS
-- `sudo`
-- `openssh-server`
-- Opcional: `fail2ban`, `auditd`, `lynis`
+| Item | Detalhe |
+|---|---|
+| Sistema | Ubuntu Server LTS (sem interface gráfica) |
+| Virtualização | VM local (2 CPUs, 2 GB RAM, 20 GB disco) |
+| Acesso | SSH com chave Ed25519 |
+| Auditor externo | [Lynis](https://github.com/CISOfy/lynis) |
+| Script próprio | Python 3 (`scripts/audit_hardening.py`) |
 
-## Uso seguro
+## Resultados
 
-1. Faça backup das configurações existentes.
-2. Confirme que há acesso alternativo ao servidor (console/IPMI).
-3. Instale os componentes desejados:
 
-```bash
-sudo apt update
-sudo apt install openssh-server fail2ban auditd
-```
+| Medição | Antes | Depois |
+|---|---|---|
+| Lynis hardening index | _68_ | _80_ |
+| Script Python (nota %) | _48 %_ | _100 %_ |
 
-4. Valide um usuário com chave SSH ativa.
-5. Copie os arquivos com cuidado:
+Evidências: relatórios em `reports/` e capturas de tela em `docs/prints/`.
 
-```bash
-sudo cp configs/00-hardening.conf /etc/ssh/sshd_config.d/
-sudo cp configs/jail.local /etc/fail2ban/jail.local
-sudo cp configs/hardening.rules /etc/audit/rules.d/hardening.rules
-sudo cp configs/99-hardening.conf /etc/sysctl.d/
-sudo cp configs/modprobe-hardening.conf /etc/modprobe.d/
-```
+## O que foi feito
 
-6. Valide e aplique individualmente:
+### Metodologia
 
-```bash
-sudo sshd -t
-sudo systemctl reload ssh || sudo systemctl reload sshd
-sudo fail2ban-client -t
-sudo fail2ban-client reload
-sudo augenrules --load
-sudo sysctl --system
-```
+1. Criação da VM, acesso por chave SSH e **snapshot** `baseline`.
+2. Medição do estado inicial (**antes**) com Lynis e com o script Python.
+3. Aplicação de 8 controles, com snapshot antes das mudanças críticas.
+4. Medição do estado final (**depois**) com as mesmas ferramentas.
+5. Análise dos itens restantes e documentação das decisões de risco.
 
-## Auditoria
+### Controles aplicados
 
-Execute antes das alterações:
+| # | Controle | O que foi feito | Por que importa |
+|---|---|---|---|
+| 1 | Atualizações automáticas | `unattended-upgrades` ativo | Correções de segurança aplicadas sem depender de ação manual |
+| 2 | SSH | Login de root e senha desativados, `MaxAuthTries 3`, `AllowUsers`, banner | Elimina brute force de senha e reduz a superfície de acesso |
+| 3 | Firewall | UFW com `deny incoming` e `ufw limit 22/tcp` | Só o SSH é exposto, com limite de taxa de conexões |
+| 4 | Fail2ban | Jail do `sshd`, `backend = systemd`, ban de 1h | Bloqueia IPs que insistem em falhar a autenticação |
+| 5 | Auditd | Regras sobre `passwd`, `shadow`, `sudoers`, `sshd_config` e `cron` | Trilha de auditoria de contas, privilégios e persistência |
+| 6 | Kernel (sysctl) | Anti-spoofing, SYN cookies, ASLR, restrições de `dmesg` e ponteiros | Dificulta ataques de rede e exploração de memória |
+| 7 | Senhas e contas | `pwquality` (mín. 12 caracteres) e validade em `login.defs` | Reduz risco de senhas fracas e antigas |
+| 8 | Superfície de ataque | Revisão de portas (`ss`), serviços ativos, AppArmor e módulos desnecessários | Menos serviços e módulos significam menos pontos de entrada |
+
+Os arquivos de configuração aplicados estão em `configs/`.
+
+### Script de auditoria em Python
+
+O script `scripts/audit_hardening.py` verifica cerca de 30 controles e classifica cada um como PASS ou FAIL, com severidade (alta, média ou baixa).
+
+| Categoria | O que verifica |
+|---|---|
+| SSH | Configuração **efetiva** via `sshd -T` |
+| Firewall | UFW ativo |
+| Serviços | Fail2ban, Auditd e atualizações automáticas ativos |
+| Kernel | 10 parâmetros de `sysctl`, lidos de `/proc/sys` |
+| Arquivos | Permissões e dono de `passwd`, `shadow`, `gshadow` e `sshd_config` |
+| Contas | Contas com UID 0 além de root e contas com senha vazia |
+
+**Decisões de design:**
+
+- Os controles ficam em **tabelas de dados**: auditar algo novo é adicionar uma linha.
+- Os comandos são executados com `subprocess` recebendo **lista de argumentos e sem `shell=True`**, o que evita injeção de comando.
+- Se um dado não pode ser lido, o controle **reprova** (nunca dá falso PASS).
+- Retorna **código de saída 1** se um controle de severidade alta falhar, o que permite uso em pipeline.
+
+**Como executar:**
 
 ```bash
 sudo python3 scripts/audit_hardening.py \
-  --phase before \
-  --output-dir reports
+  --json reports/audit.json \
+  --md reports/audit.md
 ```
 
-Execute depois das alterações:
+## Estrutura do repositório
 
-```bash
-sudo python3 scripts/audit_hardening.py \
-  --phase after \
-  --output-dir reports
+```
+linux-hardening-ubuntu/
+├── configs/              # configurações aplicadas (SSH, Fail2ban, Auditd, sysctl, modprobe)
+├── scripts/
+│   └── audit_hardening.py
+├── reports/              # relatórios do Lynis e do script (antes e depois)
+├── docs/prints/          # evidências
+├── .github/workflows/    # Gitleaks e Bandit sobre o próprio código
+└── README.md
 ```
 
-O script cria `audit-before.json`/`audit-after.json` e `audit-before.md`/`audit-after.md`.
+## Decisões de risco (o que não foi aplicado e por quê)
 
-## Lynis
+Hardening não é aplicar tudo às cegas. Foram priorizados os controles de maior impacto e os demais foram avaliados caso a caso.
 
-```bash
-sudo lynis audit system --no-colors
-```
+| Item | Decisão | Motivo |
+|---|---|---|
+| `net.ipv4.ip_forward = 0` | Não aplicado | Quebra Docker e VPNs; o ambiente pode precisar de encaminhamento |
+| Sugestões de baixa severidade do Lynis | Parte não aplicada | Baixo impacto no laboratório e custo de manutenção maior que o benefício |
+| _(adicione os seus)_ | | |
 
-Salve os resultados completos em `reports/lynis-before.txt` e `reports/lynis-after.txt`.
+## Lições aprendidas
+
+- **Meça antes de mexer.** Sem o "antes", não há como provar o resultado.
+- **A ordem dos arquivos de configuração importa.** No OpenSSH vale a **primeira** ocorrência de cada opção, e `sshd_config.d/` é lido em ordem alfabética. Por isso o arquivo se chama `00-hardening.conf`: um `50-cloud-init.conf` poderia reativar `PasswordAuthentication yes`.
+- **Verifique a configuração efetiva, não o arquivo.** `sshd -T` mostra o que o servidor realmente usa; um `grep` pode dar falso PASS.
+- **Nunca se tranque para fora.** Mantive uma sessão SSH antiga aberta, testei a nova antes de fechar a anterior, validei com `sshd -t` e tinha snapshots. Em caso de bloqueio, a recuperação é pelo **console da VM** ou pelo snapshot. Causas típicas: senha desativada antes de a chave funcionar, `AllowUsers` errado, permissões da chave, UFW sem a porta 22 ou IP banido pelo Fail2ban.
+- **Ordem do firewall:** a regra do SSH vem **antes** do `ufw enable`; com `deny incoming` e sem a porta 22, a própria sessão é cortada.
+- **Logs no Ubuntu recente ficam no journal do systemd.** Sem `backend = systemd`, o Fail2ban pode não enxergar as falhas e nunca banir ninguém, mesmo aparecendo como ativo.
+- **Auditd é a fonte, o SIEM é a análise.** O Auditd registra os eventos no Linux (como o Sysmon faz no Windows); um SIEM como o Wazuh coleta esses logs, aplica regras e gera alertas.
+- **Decisão de risco documentada vale mais que 100% às cegas.** Registrar o que não foi aplicado e o motivo demonstra critério.
+- **Segurança não é uma nota.** Um script com 100% só confirma os controles que eu escolhi verificar.
+
+## Limitações
+
+- O script audita apenas os controles que eu implementei; não substitui o Lynis, que testa muito mais itens.
+- Não cobre vulnerabilidades em software instalado (CVEs), falhas de aplicações, erros de lógica, zero-days nem o fator humano.
+- Auditoria pontual: não detecta **desvios futuros** sem execução recorrente ou monitoramento.
+- O hardening foi feito de forma manual; ainda não é reproduzível automaticamente.
+
+## Próximos passos
+
+- Instalar o **agente Wazuh** na VM e enviar os eventos do Auditd ao SIEM, com alertas para alterações em `passwd`, `sudoers` e `sshd_config` (integração com o laboratório de AD + Wazuh).
+- Automatizar o hardening com **Ansible**, para torná-lo reproduzível.
+- Agendar a auditoria (cron ou systemd timer) e comparar execuções para detectar desvios.
+- Adicionar varredura de vulnerabilidades com **OpenVAS** ou **Trivy** no sistema de arquivos.
+- Comparar os resultados com o `usg audit` (Ubuntu Security Guide) e com o CIS Benchmark oficial.
+
+## Segurança do repositório
+
+- Nenhuma chave privada, senha ou arquivo de `/etc/shadow` é versionado.
+- O código passa por **Gitleaks** (segredos) e **Bandit** (SAST) a cada push, reaproveitando o pipeline do projeto [devsecops-pipeline-flask](https://github.com/lucasalvesbarreto-collab/devsecops-pipeline-flask).
+- Relatórios foram revisados e anonimizados antes do commit.
+
+## Referências
+
+- [Lynis](https://cisofy.com/lynis/)
+- [CIS Benchmarks](https://www.cisecurity.org/cis-benchmarks)
+- [Ubuntu Server: segurança](https://ubuntu.com/server/docs)
+- [OpenSSH: `sshd_config`](https://man.openbsd.org/sshd_config)
+
+---
+
+**Autor:** Lucas Alves Barreto · [LinkedIn](https://linkedin.com/in/lucas-alves-556693206) · [GitHub](https://github.com/lucasalvesbarreto-collab)

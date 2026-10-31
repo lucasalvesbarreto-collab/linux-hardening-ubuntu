@@ -27,7 +27,6 @@ Laboratório prático de endurecimento (*hardening*) de um servidor Ubuntu Serve
 |---|---|---|---|
 | Lynis hardening index | 68 | 80 | +12 pontos |
 | Script Python (nota %) | 48% | 100% | +52 pontos percentuais |
-| Controles FAIL de severidade alta | _n_ | 0 | |
 
 **Como interpretar.** O script chegou a 100% porque verifica os ~30 controles que eu implementei. O Lynis testa centenas de itens, por isso a nota dele é menor e é a medição mais exigente. Os itens que ficaram abertos no Lynis estão justificados na seção de decisões de risco.
 

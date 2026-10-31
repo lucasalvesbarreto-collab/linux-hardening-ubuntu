@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local audit output
+*.tmp
+*.log
+
+# Never commit private keys or copied password databases
+**/id_ed25519
+**/id_rsa
+**/*.pem
+**/*.key
+**/shadow
+**/shadow-*
+**/*shadow*
